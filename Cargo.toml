@@ -1,7 +1,12 @@
 [package]
 name = "easy_secp256k1"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
+authors = ["Caleb Couch <caleb@orange.me>"]
+description = "Easy interface to secp256k1 29.1"
+license = "BSD-3-Clause"
+repository = "https://github.com/ramp-stack/easy_secp256k1"
+
 
 [dependencies]
 bitcoin = "0.32.5"

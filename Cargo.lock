@@ -120,7 +120,7 @@ checksum = "8ac8be588b1de2b7f1537ed39ba453a388d2cce60ce78ef5db449f71bebe58ba"
 
 [[package]]
 name = "easy_secp256k1"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "bitcoin",
  "bitcoin_hashes 0.16.0",
