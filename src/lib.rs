@@ -11,6 +11,8 @@ use bitcoin::bip32::{ChildNumber, ChainCode, Xpriv};
 
 use chacha20_poly1305::{ChaCha20Poly1305, Nonce, Key};
 
+use secp256k1::Error;
+
 mod signed;
 pub use signed::Signed;
 
@@ -42,41 +44,16 @@ impl Hashable for EasyHash {
    }
 }
 
-#[derive(Debug)]
-pub enum Error {
-    Secp256k1(secp256k1::Error),
-    ChaCha(chacha20_poly1305::Error),
-    ///Index must be less than 2^31-1
-    NotHardenedIndex(u32),
-    Bip32(bitcoin::bip32::Error),
-    CorruptedPayload
-}
-impl std::error::Error for Error {}
-impl From<secp256k1::Error> for Error {
-    fn from(error: secp256k1::Error) -> Self {Error::Secp256k1(error)}
-}
-impl From<chacha20_poly1305::Error> for Error {
-    fn from(error: chacha20_poly1305::Error) -> Self {Error::ChaCha(error)}
-}
-impl From<bitcoin::bip32::Error> for Error {
-    fn from(error: bitcoin::bip32::Error) -> Self {Error::Bip32(error)}
-}
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
 pub trait EasyPublicKey {
     fn easy_verify(&self, signature: &Signature, payload: &[u8]) -> Result<(), Error>;
     fn easy_encrypt(&self, payload: Vec<u8>) -> Result<Vec<u8>, Error>;
 }
 impl EasyPublicKey for PublicKey {
     fn easy_verify(&self, signature: &Signature, payload: &[u8]) -> Result<(), Error> {
-        Ok(signature.verify(
+        signature.verify(
             &Message::from_digest(*EasyHash::hash(payload).as_ref()),
             &self.x_only_public_key().0
-        )?)
+        )
     }
 
     fn easy_encrypt(&self, mut payload: Vec<u8>) -> Result<Vec<u8>, Error> {
@@ -98,7 +75,7 @@ pub trait EasySecretKey {
     fn easy_sign(&self, payload: &[u8]) -> Signature;
     fn easy_decrypt(&self, payload: &[u8]) -> Result<Vec<u8>, Error>;
     fn easy_public_key(&self) -> PublicKey;
-    fn easy_derive(&self, path: &[u32]) -> Result<Self, Error> where Self: Sized;
+    fn easy_derive(&self, path: &[u16]) -> Result<Self, Error> where Self: Sized;
 }
 
 impl EasySecretKey for SecretKey {
@@ -112,20 +89,20 @@ impl EasySecretKey for SecretKey {
     }
 
     fn easy_decrypt(&self, payload: &[u8]) -> Result<Vec<u8>, Error> {
-        if payload.len() < 64+16 {return Err(Error::CorruptedPayload);}
-        let theirs = ElligatorSwift::from_array(payload[0..64].try_into().or(Err(Error::CorruptedPayload))?);
-        let tag: [u8; 16] = payload[64..64+16].try_into().or(Err(Error::CorruptedPayload))?;
+        if payload.len() < 64+16 {return Err(Error::InvalidMessage);}
+        let theirs = ElligatorSwift::from_array(payload[0..64].try_into().or(Err(Error::InvalidMessage))?);
+        let tag: [u8; 16] = payload[64..64+16].try_into().or(Err(Error::InvalidMessage))?;
         let mut payload = payload[64+16..].to_vec();
 
         let mine = ElligatorSwift::from_pubkey(self.easy_public_key());
         let ecdh_sk = ElligatorSwift::shared_secret(theirs, mine, *self, ElligatorSwiftParty::B, Some(DATA.as_bytes()));
         let key = Key::new(ecdh_sk.to_secret_bytes());
 
-        ChaCha20Poly1305::new(key, Nonce::new([0; 12])).decrypt(&mut payload, tag, None)?;
+        ChaCha20Poly1305::new(key, Nonce::new([0; 12])).decrypt(&mut payload, tag, None).map_err(|_| Error::InvalidMessage)?;
         Ok(payload)
     }
 
-    fn easy_derive(&self, path: &[u32]) -> Result<Self, Error> {
+    fn easy_derive(&self, path: &[u16]) -> Result<Self, Error> {
         let x_priv = Xpriv{
             network: bitcoin::Network::Bitcoin.into(),
             depth: 0,
@@ -134,7 +111,7 @@ impl EasySecretKey for SecretKey {
             private_key: *self,
             chain_code: ChainCode::from(self.secret_bytes())
         };
-        let path = path.iter().map(|i| ChildNumber::from_hardened_idx(*i).map_err(|_| Error::NotHardenedIndex(*i))).collect::<Result<Vec<_>, Error>>()?;
+        let path = path.iter().map(|i| ChildNumber::from_hardened_idx((*i).into()).unwrap()).collect::<Vec<_>>();
         let r_priv = x_priv.derive_priv(SECP256K1, &path).unwrap().to_priv().inner;
         Ok(r_priv)
     }
