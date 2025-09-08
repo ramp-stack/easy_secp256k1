@@ -57,7 +57,6 @@ use serde::de::{self, Deserialize, Deserializer, Visitor, SeqAccess, MapAccess};
 #[cfg(feature = "serde")]
 impl<'de, T: Hash + Deserialize<'de>> Deserialize<'de> for Signed<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let (zero, one, two) = <(PublicKey, Signature, T)>::deserialize(deserializer);
-        Signed(zero, one, tw)
+        <(PublicKey, Signature, T)>::deserialize(deserializer).map(|(o, t, r)| Signed(o, t, r))
     }
 }
