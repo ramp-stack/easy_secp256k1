@@ -11,7 +11,7 @@ use bitcoin::bip32::{ChildNumber, ChainCode, Xpriv};
 
 use chacha20_poly1305::{ChaCha20Poly1305, Nonce, Key};
 
-use secp256k1::Error;
+pub use secp256k1::Error;
 
 mod signed;
 pub use signed::Signed;
@@ -75,7 +75,7 @@ pub trait EasySecretKey {
     fn easy_sign(&self, payload: &[u8]) -> Signature;
     fn easy_decrypt(&self, payload: &[u8]) -> Result<Vec<u8>, Error>;
     fn easy_public_key(&self) -> PublicKey;
-    fn easy_derive(&self, path: &[u16]) -> Result<Self, Error> where Self: Sized;
+    fn easy_derive(&self, path: &[u32]) -> Result<Self, Error> where Self: Sized;
 }
 
 impl EasySecretKey for SecretKey {
@@ -102,7 +102,7 @@ impl EasySecretKey for SecretKey {
         Ok(payload)
     }
 
-    fn easy_derive(&self, path: &[u16]) -> Result<Self, Error> {
+    fn easy_derive(&self, path: &[u32]) -> Result<Self, Error> {
         let x_priv = Xpriv{
             network: bitcoin::Network::Bitcoin.into(),
             depth: 0,
@@ -111,7 +111,9 @@ impl EasySecretKey for SecretKey {
             private_key: *self,
             chain_code: ChainCode::from(self.secret_bytes())
         };
-        let path = path.iter().map(|i| ChildNumber::from_hardened_idx((*i).into()).unwrap()).collect::<Vec<_>>();
+        let path = path.iter().map(|i|
+            ChildNumber::from_hardened_idx((*i).into()).map_err(|_| Error::InvalidSecretKey)
+        ).collect::<Result<Vec<_>, Error>>()?;
         let r_priv = x_priv.derive_priv(SECP256K1, &path).unwrap().to_priv().inner;
         Ok(r_priv)
     }
