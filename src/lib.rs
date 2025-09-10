@@ -2,8 +2,8 @@ use bitcoin_hashes::sha256::{HashEngine, Midstate};
 use bitcoin_hashes::sha256t::Hash;
 use bitcoin_hashes::sha256t::Tag;
 
-use secp256k1::{SECP256K1, SecretKey, PublicKey, Keypair, Message};
-use secp256k1::ellswift::{ElligatorSwiftParty, ElligatorSwift};
+use secp256k1::{SECP256K1, SecretKey, PublicKey, Keypair};
+use secp256k1::ellswift::{Party, ElligatorSwift};
 use secp256k1::schnorr::Signature;
 use secp256k1::rand;
 
@@ -51,7 +51,7 @@ pub trait EasyPublicKey {
 impl EasyPublicKey for PublicKey {
     fn easy_verify(&self, signature: &Signature, payload: &[u8]) -> Result<(), Error> {
         signature.verify(
-            &Message::from_digest(*EasyHash::hash(payload).as_ref()),
+            EasyHash::hash(payload).as_ref(),
             &self.x_only_public_key().0
         )
     }
@@ -60,7 +60,7 @@ impl EasyPublicKey for PublicKey {
         let secret = SecretKey::easy_new();
         let mine = ElligatorSwift::from_pubkey(secret.easy_public_key());
         let theirs = ElligatorSwift::from_pubkey(*self);
-        let ecdh_sk = ElligatorSwift::shared_secret(mine, theirs, secret, ElligatorSwiftParty::A, Some(DATA.as_bytes()));
+        let ecdh_sk = ElligatorSwift::shared_secret(mine, theirs, secret, Party::Initiator, Some(DATA.as_bytes()));
         let key = Key::new(ecdh_sk.to_secret_bytes());
         Ok([
             mine.to_array().to_vec(),//TODO: unencrypted
@@ -79,13 +79,13 @@ pub trait EasySecretKey {
 }
 
 impl EasySecretKey for SecretKey {
-    fn easy_new() -> Self {SecretKey::new(&mut rand::thread_rng())}
+    fn easy_new() -> Self {SecretKey::new(&mut rand::rng())}
 
     fn easy_public_key(&self) -> PublicKey {self.public_key(SECP256K1)}
 
     fn easy_sign(&self, payload: &[u8]) -> Signature {
         let keypair = Keypair::from_secret_key(SECP256K1, self);
-        SECP256K1.sign_schnorr(&Message::from_digest(*EasyHash::hash(payload).as_ref()), &keypair)
+        SECP256K1.sign_schnorr(EasyHash::hash(payload).as_ref(), &keypair)
     }
 
     fn easy_decrypt(&self, payload: &[u8]) -> Result<Vec<u8>, Error> {
@@ -95,7 +95,7 @@ impl EasySecretKey for SecretKey {
         let mut payload = payload[64+16..].to_vec();
 
         let mine = ElligatorSwift::from_pubkey(self.easy_public_key());
-        let ecdh_sk = ElligatorSwift::shared_secret(theirs, mine, *self, ElligatorSwiftParty::B, Some(DATA.as_bytes()));
+        let ecdh_sk = ElligatorSwift::shared_secret(theirs, mine, *self, Party::Responder, Some(DATA.as_bytes()));
         let key = Key::new(ecdh_sk.to_secret_bytes());
 
         ChaCha20Poly1305::new(key, Nonce::new([0; 12])).decrypt(&mut payload, tag, None).map_err(|_| Error::InvalidMessage)?;
@@ -108,14 +108,14 @@ impl EasySecretKey for SecretKey {
             depth: 0,
             parent_fingerprint: [0; 4].into(),
             child_number: ChildNumber::from_hardened_idx(0).unwrap(),
-            private_key: *self,
+            private_key: bitcoin::secp256k1::SecretKey::from_slice(&self.secret_bytes()).unwrap(),
             chain_code: ChainCode::from(self.secret_bytes())
         };
         let path = path.iter().map(|i|
-            ChildNumber::from_hardened_idx((*i).into()).map_err(|_| Error::InvalidSecretKey)
+            ChildNumber::from_hardened_idx(*i).map_err(|_| Error::InvalidSecretKey)
         ).collect::<Result<Vec<_>, Error>>()?;
-        let r_priv = x_priv.derive_priv(SECP256K1, &path).unwrap().to_priv().inner;
-        Ok(r_priv)
+        let r_priv = x_priv.derive_priv(&bitcoin::key::Secp256k1::new(), &path).unwrap().to_priv().inner;
+        Ok(SecretKey::from_byte_array(r_priv.secret_bytes()).unwrap())
     }
 }
 
@@ -126,7 +126,7 @@ fn signature() {
     let signature = secret_key.easy_sign(message);
 
     let public_key = secret_key.easy_public_key();
-    public_key.easy_verify(message, &signature).unwrap();
+    public_key.easy_verify(&signature, message).unwrap();
 }
 
 #[test]
